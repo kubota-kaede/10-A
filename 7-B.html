@@ -1,0 +1,230 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>7-B</title>
+<canvas id="cv" width="640" height="360" style="background:#0e1528"></canvas>
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+// ── オブジェクト ─────────────────────────
+const player = { x: 80, y: 260, w: 28, h: 36 };
+const floor  = { x: 0,  y: 320, w: 640, h: 40 };
+const plat   = { x: 360, y: 240, w: 160, h: 16 }; // 浮遊足場
+// ─ 動く足場 ─
+const plat2  = { x: 100, y: 150, w: 100, h: 16, vx: 100, dir: 1 };
+// ─ トラップオブジェクト ─
+const trap   = { x:220, y:304, w:28, h:16, color:'#f65b6a' }; // 触れるとアウト
+// ─ ゴールオブジェクトとゴール状態管理変数 ─ 
+const goal   = { x:580, y:284, w:40, h:36, color:'#f8e05d' };
+let reached=false;
+
+let time = 0;           // 経過時間（秒）
+let goalTime = null;    // ゴールした時の時間（nullなら未達）
+
+// ── 物理パラメータ ────────────────────────
+let vx = 0    // 横方向の移動速度
+let vy = 0;
+const speed = 240;   // 地上での移動速度(px/s)
+const jump  = 700;   // ジャンプ初速(px/s)
+const g     = 2000;  // 重力加速度(px/s^2)
+let isGrounded = false;
+
+// ── 入力 ──────────────────────────────────
+const keys = {};
+addEventListener('keydown', e => keys[e.key] = true);   // イベントリスナ、第2引数はアロー関数
+addEventListener('keyup',   e => keys[e.key] = false);  // イベントリスナ、第２引数はアロー関数
+addEventListener('keydown', e=>{
+  // 地上にいるときだけジャンプ
+  if (e.code === 'Space' && isGrounded) vy = -jump;     // パラメータを使用
+});
+
+// ── 当たり判定ユーティリティ（AABB） ──────
+function aabb(r1, r2) {
+  return (r1.x < r2.x + r2.w && r1.x + r1.w > r2.x &&
+          r1.y < r2.y + r2.h && r1.y + r1.h > r2.y);
+}
+
+// ── 衝突処理：床 ────────────────────────
+function collideWithFloor() {
+  const bottom = player.y + player.h;
+  if (bottom > floor.y) {
+    player.y = floor.y - player.h; // 吸着
+    vy = 0;
+    isGrounded = true;
+  }
+}
+
+// ── 衝突処理：浮遊足場（上からのみ着地） ──
+function collideWithPlatform(dt) {
+  // 今フレームの矩形
+  const pNow = { x: player.x, y: player.y, w: player.w, h: player.h };
+  if (!aabb(pNow, plat)) return; // そもそも重なっていない
+
+  // 前フレームの“底”が足場の上面より上にあったなら「上から来た」とみなす
+  const prevBottom = (player.y - vy * dt) + player.h;
+  const prevTop    = (player.y - vy * dt);
+  const prevRight  = (player.x - vx * dt) + player.w;
+  const prevLeft   = (player.x - vx * dt);
+  
+  const platformTop = plat.y;
+  const platformBottom = plat.y + plat.h;
+  const platformLeft   = plat.x;
+  const platformRight  = plat.x + plat.w;
+
+  if (prevBottom <= platformTop && vy >= 0) {
+    // 上から着地
+    player.y = platformTop - player.h; // 吸着
+    vy = 0;
+    isGrounded = true;
+  } else if (prevTop >= platformBottom && vy < 0){
+    // 下からぶつかった
+    player.y = platformBottom;
+    vy = 0;
+  }else if (prevRight <= platformLeft && vx > 0) {
+    // 左からぶつかった
+    player.x = platformLeft - player.w;
+  }else if (prevLeft >= platformRight && vx < 0) {
+    // 右からぶつかった
+    player.x = platformRight;
+  }
+}
+
+// ── 移動処理：動く足場 ────────────────
+function movePlatform2(dt) {
+  plat2.x += plat2.vx * plat2.dir * dt;
+  if (plat2.x < 50 || plat2.x + plat2.w > 590) plat2.dir *= -1;
+}
+
+// ── 衝突処理：動く足場 ────────────────
+function collideWithPlatform2(dt) {
+  if (!aabb(player, plat2)) return;
+
+  const prevBottom = (player.y - vy * dt) + player.h;
+  const prevTop    = (player.y - vy * dt);
+  const prevRight  = (player.x - vx * dt) + player.w;
+  const prevLeft   = (player.x - vx * dt);
+
+  const platformTop    = plat2.y;
+  const platformBottom = plat2.y + plat2.h;
+  const platformLeft   = plat2.x;
+  const platformRight  = plat2.x + plat2.w;
+
+  // 上から着地
+  if (prevBottom <= platformTop && vy >= 0) {
+    player.y = platformTop - player.h;
+    vy = 0;
+    isGrounded = true;
+    player.x += plat2.vx * plat2.dir * dt; // 足場と一緒に運ばれる
+  }
+  // 下からぶつかった（ジャンプ中に天井に当たる）
+  else if (prevTop >= platformBottom && vy < 0) {
+    player.y = platformBottom;
+    vy = 0;
+  }
+  // 左からぶつかった
+  else if (prevRight <= platformLeft && vx > 0) {
+    player.x = platformLeft - player.w;
+  }
+  // 右からぶつかった
+  else if (prevLeft >= platformRight && vx < 0) {
+    player.x = platformRight;
+  }
+}
+
+
+// ── 衝突処理：トラップ ────────────────
+function checkTrap() {
+  if (aabb(player, trap)) {
+    // 当たったら初期位置へ
+    player.x = 100;
+    player.y = 100;
+    vy = 0;
+  }
+}
+
+// ── 衝突処理：ゴール ────────────────
+function checkGoal() {
+  if (aabb(player, goal) && !reached) {
+    reached = true;
+    goalTime = time; // ゴールした瞬間の時間を記録
+  }
+}
+
+// ── 位置更新 ──────────────────────
+function update(dt){
+  if (!reached) time += dt; // ゴールしてなければ時間を進める
+
+  // 入力と物理処理
+  vx = 0;
+  if (keys['ArrowLeft'])  vx = -speed;
+  if (keys['ArrowRight']) vx =  speed;
+
+  player.x += vx * dt;
+  vy += g * dt;
+  player.y += vy * dt;
+
+  isGrounded = false;
+  collideWithFloor();
+  collideWithPlatform(dt);
+  collideWithPlatform2(dt);
+  movePlatform2(dt);
+  checkTrap();
+  checkGoal();
+}
+
+
+// ── 描画 ──────────────────────────────────
+function draw() {
+  ctx.clearRect(0,0,cv.width,cv.height);
+
+  // 床
+  ctx.fillStyle = '#203060';
+  ctx.fillRect(floor.x, floor.y, floor.w, floor.h);
+
+  // 浮遊足場
+  ctx.fillStyle = '#2e446e';
+  ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+
+  // 動く足場
+  ctx.fillStyle='#4468cc';
+  ctx.fillRect(plat2.x,plat2.y,plat2.w,plat2.h);
+
+  // trap
+  ctx.fillStyle=trap.color;
+  ctx.fillRect(trap.x, trap.y, trap.w, trap.h);
+
+  // ゴールオブジェクト
+  ctx.fillStyle = goal.color;
+  ctx.fillRect(goal.x, goal.y, goal.w, goal.h);
+
+  // ゴールの状態管理変数を使ってゴール状態を表示する
+  if (reached) {
+    ctx.fillStyle = '#fff';
+    ctx.font = '28px sans-serif';
+    ctx.fillText('Goal!', 270, 180);
+  }
+
+  // プレイヤー（地上:水色／空中:黄）
+  ctx.fillStyle = isGrounded ? '#7ef5e1' : '#ffd166';
+  ctx.fillRect(player.x, player.y, player.w, player.h);
+
+  // HUD
+  ctx.fillStyle = '#cbd5e1';
+  ctx.font = '12px ui-monospace,monospace';
+  ctx.fillText(`vy=${vy.toFixed(1)} grounded=${isGrounded}`, 8, 16);
+ 
+  // タイマー表示（ゴール後は固定）
+  ctx.fillText(`Time: ${reached ? goalTime.toFixed(2) : time.toFixed(2)}s`, 8, 32);
+}
+
+// ── ループ ─────────────────────────────────
+let last = performance.now();
+function loop(now) {
+  const dt = (now - last) / 1000; last = now;
+
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
